@@ -1,9 +1,11 @@
 package in.uncod.android.bypass;
 
-import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.support.annotation.ColorInt;
+import androidx.annotation.ColorInt;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
@@ -17,19 +19,17 @@ import android.text.style.TypefaceSpan;
 import android.util.DisplayMetrics;
 import android.util.Patterns;
 import android.util.TypedValue;
-import android.widget.TextView;
-
-import in.uncod.android.bypass.style.FancyQuoteSpan;
-import in.uncod.android.bypass.style.ImageLoadingSpan;
-
-import in.uncod.android.bypass.Element.Type;
-import in.uncod.android.bypass.style.HorizontalLineSpan;
-import in.uncod.android.bypass.style.TouchableUrlSpan;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class Bypass {
+import in.uncod.android.bypass.Element.Type;
+import in.uncod.android.bypass.style.FancyQuoteSpan;
+import in.uncod.android.bypass.style.HorizontalLineSpan;
+import in.uncod.android.bypass.style.ImageLoadingSpan;
+import in.uncod.android.bypass.style.TouchableUrlSpan;
+
+public class Bypass implements Markdown {
     static {
         System.loadLibrary("bypass");
     }
@@ -49,30 +49,28 @@ public class Bypass {
     // We need to track multiple ordered lists at once because of nesting.
     private final Map<Element, Integer> mOrderedListNumber = new ConcurrentHashMap<Element, Integer>();
 
-    public Bypass(Context context, Options options) {
+    public Bypass(DisplayMetrics displayMetrics, Options options) {
         mOptions = options;
 
-        DisplayMetrics dm = context.getResources().getDisplayMetrics();
-
         mListItemIndent = (int) TypedValue.applyDimension(mOptions.mListItemIndentUnit,
-                mOptions.mListItemIndentSize, dm);
+                mOptions.mListItemIndentSize, displayMetrics);
 
         mBlockQuoteIndent = (int) TypedValue.applyDimension(mOptions.mBlockQuoteIndentUnit,
-                mOptions.mBlockQuoteIndentSize, dm);
+                mOptions.mBlockQuoteIndentSize, displayMetrics);
 
         mBlockQuoteLineWidth = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
-                mOptions.mBlockQuoteLineWidth, dm);
+                mOptions.mBlockQuoteLineWidth, displayMetrics);
 
         mBlockQuoteLineIndent = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
-                mOptions.mBlockQuoteLineIndent, dm);
+                mOptions.mBlockQuoteLineIndent, displayMetrics);
 
         mCodeBlockIndent = (int) TypedValue.applyDimension(mOptions.mCodeBlockIndentUnit,
-                mOptions.mCodeBlockIndentSize, dm);
+                mOptions.mCodeBlockIndentSize, displayMetrics);
 
         mHruleSize = (int) TypedValue.applyDimension(mOptions.mHruleUnit,
-                mOptions.mHruleSize, dm);
+                mOptions.mHruleSize, displayMetrics);
 
-        mHruleTopBottomPadding = (int) dm.density * 10;
+        mHruleTopBottomPadding = (int) displayMetrics.density * 10;
     }
 
     private static void setSpan(SpannableStringBuilder builder, Object what) {
@@ -93,14 +91,20 @@ public class Bypass {
         builder.setSpan(new AbsoluteSizeSpan(height, true), 0, 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
     }
 
-    public CharSequence markdownToSpannable(String markdown, TextView textView, LoadImageCallback loadImageCallback) {
+    @NonNull
+    @Override
+    public CharSequence markdownToSpannable(@NonNull String markdown,
+                                            @NonNull ColorStateList linksColors,
+                                            int highlightColor,
+                                            @Nullable LoadImageCallback loadImageCallback) {
         Document document = processMarkdown(markdown);
 
         int size = document.getElementCount();
         CharSequence[] spans = new CharSequence[size];
 
         for (int i = 0; i < size; i++) {
-            spans[i] = recurseElement(document.getElement(i), i, size, textView, loadImageCallback);
+            spans[i] = recurseElement(document.getElement(i), i, size, linksColors, highlightColor,
+                    loadImageCallback);
         }
 
         return TextUtils.concat(spans);
@@ -111,8 +115,13 @@ public class Bypass {
     // The 'numberOfSiblings' parameters refers to the number of siblings within the parent, including
     // the 'element' parameter, as in "How many siblings are you?" rather than "How many siblings do
     // you have?".
-    private CharSequence recurseElement(Element element, int indexWithinParent, int numberOfSiblings,
-                                        TextView textView, LoadImageCallback loadImageCallback) {
+    private CharSequence recurseElement(
+            Element element,
+            int indexWithinParent,
+            int numberOfSiblings,
+            ColorStateList linksColors,
+            int highlightColor,
+            LoadImageCallback loadImageCallback) {
 
         Type type = element.getType();
 
@@ -132,7 +141,8 @@ public class Bypass {
         CharSequence[] spans = new CharSequence[size];
 
         for (int i = 0; i < size; i++) {
-            spans[i] = recurseElement(element.children[i], i, size, textView, loadImageCallback);
+            spans[i] = recurseElement(element.children[i], i, size, linksColors,
+                    highlightColor, loadImageCallback);
         }
 
         // Clean up after we're done
@@ -263,8 +273,7 @@ public class Bypass {
                 if (!TextUtils.isEmpty(link) && Patterns.EMAIL_ADDRESS.matcher(link).matches()) {
                     link = "mailto:" + link;
                 }
-                setSpan(builder, new TouchableUrlSpan(link, textView.getLinkTextColors(),
-                                                        textView.getHighlightColor()));
+                setSpan(builder, new TouchableUrlSpan(link, linksColors, highlightColor));
                 break;
             case BLOCK_QUOTE:
                 // We add two leading margin spans so that when the order is reversed,
@@ -289,22 +298,15 @@ public class Bypass {
                     ImageLoadingSpan loadingSpan = new ImageLoadingSpan();
                     setSpanWithPrependedNewline(builder, loadingSpan);
                     // make the (eventually loaded) image span clickable to open in browser
-                    setSpanWithPrependedNewline(builder, new TouchableUrlSpan(url, textView.getLinkTextColors(), textView.getHighlightColor()));
+                    setSpanWithPrependedNewline(builder, new TouchableUrlSpan(url,
+                            linksColors,
+                            highlightColor));
                     loadImageCallback.loadImage(url, loadingSpan);
                 }
                 break;
         }
 
         return builder;
-    }
-
-    public interface LoadImageCallback {
-        /**
-         * A callback to load an image found in a markdown document.
-         * @param src The source (url) of the image.
-         * @param loadingSpan A placeholder span making where the image should be inserted.
-         */
-        void loadImage(String src, ImageLoadingSpan loadingSpan);
     }
 
     /**
